@@ -1,0 +1,53 @@
+fn build_inventory() {
+    var mut items = { "fresh_apples": 3, "ripe_bananas": 5 }
+    items.ripe_bananas = items.ripe_bananas + 2
+    items = std.collections.insert(items, "sweet_oranges", 4)
+    return items
+}
+
+fn render_inventory(inventory) {
+    var keys = std.collections.keys(inventory)
+    var values = std.collections.values(inventory)
+    var mut indexes = std.collections.range(0, std.collections.len(keys))
+    println("inventory:")
+    for index in indexes {
+        println(
+            " -",
+            std.string.replace(keys[index], "_", " "),
+            values[index]
+        )
+    }
+}
+
+fn main() {
+    println("--- Narcissus App ---")
+
+    println("Enter your name (optional):")
+    var mut name = std.io.read_line()
+    if std.string.is_empty(name) {
+        name = "Traveler"
+    }
+    println(std.string.to_upper(greet(name)))
+
+    var mut numbers = std.collections.range(0, 5)
+    numbers = std.collections.push(numbers, 10)
+    var result = std.collections.pop(numbers)
+    println("popped:", result.value)
+    numbers = result.array
+    numbers = std.collections.range_step(10, 0, -3)
+    println("numbers:", numbers)
+    println("sum:", sum(numbers))
+    println("greeting:", std.string.join(["hello", name], ", "))
+
+    var inventory = build_inventory()
+    render_inventory(inventory)
+
+    println("factorial 5:", factorial(5))
+    println("pow example:", std.math.pow(2, 8))
+    println("round example:", std.math.round(3.6))
+    println("current seconds:", std.time.now())
+
+    std.runtime.sleep(50)
+}
+
+main()

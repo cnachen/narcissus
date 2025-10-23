@@ -1,0 +1,10 @@
+var mut inventory = {
+    "apples": 3,
+    "bananas": 7,
+    "oranges": 4
+}
+
+inventory.bananas = inventory.bananas + 1
+inventory.oranges = inventory.oranges + 2
+
+print("updated inventory:", inventory)

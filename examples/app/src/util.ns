@@ -1,0 +1,18 @@
+fn greet(name) {
+    return std.string.join(["Hello", name], " ")
+}
+
+fn sum(numbers) {
+    var mut total = 0
+    for value in numbers {
+        total = total + value
+    }
+    return total
+}
+
+fn factorial(n) {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}

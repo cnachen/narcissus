@@ -1,0 +1,10 @@
+print("Hello from Narcissus!")
+
+var greeting = "traveler"
+print("greeting:", greeting)
+
+fn add(a, b) {
+    return a + b
+}
+
+print("2 + 5 =", add(2, 5))
