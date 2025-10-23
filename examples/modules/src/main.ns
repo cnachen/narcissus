@@ -1,0 +1,47 @@
+module main
+
+use utils
+use samedir.one
+use samedir.two.impl
+use samedir.two
+
+use samedir.two.impl as ximpl
+use samedir.two.impl as yimpl
+
+module extra {
+    fn p() -> Int {
+        return 42
+    }
+
+    module extra2 {
+        fn p() -> Int {
+            return 114514
+        }
+    }
+}
+
+module ex {
+
+}
+
+fn main() {
+    println(utils.p())
+    println(ex.p())
+    println(extra.p())
+    println(extra.extra2.p())
+    println(one.p())
+    println(two.p())
+    println(impl.p())
+    println(ximpl.p())
+    println(yimpl.p())
+
+    # `println(unused.p())` is not available since there is no `use unused`
+
+    """
+    this is multiline comment
+    """
+
+    return 0
+}
+
+main()

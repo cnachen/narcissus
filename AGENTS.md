@@ -2,6 +2,7 @@
 
 ## The Narcissus Language Design in DESIGNS.md
 - Keeps this file and `docs/` updated after the codebase changed.
+- Do not touch files in `examples/`, it's gold.
 
 ## Project Structure & Module Organization
 The workspace is a single Rust crate. Core language/runtime code lives in `src/lib.rs` and supporting modules under `src/`. Command-line front ends live in `src/bin/`:

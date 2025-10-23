@@ -1,3 +1,8 @@
+module app.main
+
+use std.math
+use app.util as myutil
+
 fn build_inventory() {
     var mut items = { "fresh_apples": 3, "ripe_bananas": 5 }
     items.ripe_bananas = items.ripe_bananas + 2
@@ -27,7 +32,7 @@ fn main() {
     if std.string.is_empty(name) {
         name = "Traveler"
     }
-    println(std.string.to_upper(greet(name)))
+    println(std.string.to_upper(myutil.greet(name)))
 
     var mut numbers = std.collections.range(0, 5)
     numbers = std.collections.push(numbers, 10)
@@ -36,15 +41,15 @@ fn main() {
     numbers = result.array
     numbers = std.collections.range_step(10, 0, -3)
     println("numbers:", numbers)
-    println("sum:", sum(numbers))
+    println("sum:", myutil.sum(numbers))
     println("greeting:", std.string.join(["hello", name], ", "))
 
     var inventory = build_inventory()
     render_inventory(inventory)
 
-    println("factorial 5:", factorial(5))
-    println("pow example:", std.math.pow(2, 8))
-    println("round example:", std.math.round(3.6))
+    println("factorial 5:", myutil.factorial(5))
+    println("pow example:", math.pow(2, 8))
+    println("round example:", math.round(3.6))
     println("current seconds:", std.time.now())
 
     std.runtime.sleep(50)

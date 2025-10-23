@@ -241,6 +241,101 @@ fn std_collections_helpers() {
 }
 
 #[test]
+fn module_use_resolves_nested_paths() {
+    let mut interpreter = Interpreter::new();
+
+    let samedir_prefix = vec!["samedir".to_string()];
+    interpreter
+        .eval_source_with_prefix(
+            r#"
+            module samedir.one
+
+            fn p() -> Int {
+                return 7
+            }
+            "#,
+            &samedir_prefix,
+        )
+        .expect("load samedir.one");
+
+    let samedir_two_prefix = vec!["samedir".to_string(), "two".to_string()];
+    interpreter
+        .eval_source_with_prefix(
+            r#"
+            module two.impl
+
+            fn p() -> Int {
+                return 11
+            }
+            "#,
+            &samedir_two_prefix,
+        )
+        .expect("load samedir.two.impl");
+
+    interpreter
+        .eval_source(
+            r#"
+            module main
+
+            use samedir.one
+            use samedir.two
+            use samedir.two.impl as alias
+
+            fn compute() -> Int {
+                return one.p() + two.p() + alias.p()
+            }
+            "#,
+        )
+        .expect("load main module");
+
+    let result = interpreter
+        .eval_source(
+            r#"
+            use main
+            main.compute()
+            "#,
+        )
+        .expect("invoke main.compute()");
+    assert_eq!(expect_int(&result), 29);
+}
+
+#[test]
+fn module_access_requires_use() {
+    let mut interpreter = Interpreter::new();
+    interpreter
+        .eval_source_with_prefix(
+            r#"
+            module helpers
+
+            fn value() -> Int {
+                return 13
+            }
+            "#,
+            &[],
+        )
+        .expect("load helpers module");
+
+    let err = interpreter
+        .eval_source("helpers.value()")
+        .expect_err("helpers should require use");
+    let message = format!("{err}");
+    assert!(
+        message.contains("undefined variable `helpers`"),
+        "{message}"
+    );
+
+    let value = interpreter
+        .eval_source(
+            r#"
+            use helpers
+            helpers.value()
+            "#,
+        )
+        .expect("helpers.value() after use");
+    assert_eq!(expect_int(&value), 13);
+}
+
+#[test]
 fn std_fs_read_text() {
     let value = eval("std.fs.read_text(\"examples/quickstart.ns\")");
     match value.0.as_ref() {

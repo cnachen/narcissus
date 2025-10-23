@@ -6,5 +6,5 @@ fn describe(value) {
     }
 }
 
-print("describe(0) ->", describe(0))
-print("describe(5) ->", describe(5))
+println("describe(0) ->", describe(0))
+println("describe(5) ->", describe(5))

@@ -10,14 +10,25 @@ use crate::{
     value::{UserFunction, Value, ValueKind},
 };
 
-#[derive(Default)]
+#[derive(Clone)]
+struct PendingUse {
+    env: EnvironmentRef,
+    name: String,
+    path: Vec<String>,
+    span: SourceSpan,
+}
+
+#[derive(Default, Clone)]
 pub struct ExecutionContext {
-    pub module_name: Option<String>,
+    pub module_prefix: Vec<String>,
+    pub current_module: Vec<String>,
 }
 
 pub struct Interpreter {
     env: EnvironmentRef,
     context: ExecutionContext,
+    modules: IndexMap<Vec<String>, Value>,
+    pending_uses: Vec<PendingUse>,
 }
 
 impl Interpreter {
@@ -26,6 +37,8 @@ impl Interpreter {
         let mut interpreter = Self {
             env,
             context: ExecutionContext::default(),
+            modules: IndexMap::new(),
+            pending_uses: Vec::new(),
         };
         interpreter.install_prelude();
         interpreter
@@ -33,22 +46,41 @@ impl Interpreter {
 
     pub fn with_context(context: ExecutionContext) -> Self {
         let env = Environment::new();
-        let mut interpreter = Self { env, context };
+        let mut interpreter = Self {
+            env,
+            context,
+            modules: IndexMap::new(),
+            pending_uses: Vec::new(),
+        };
         interpreter.install_prelude();
         interpreter
     }
 
     pub fn eval_source(&mut self, source: &str) -> Result<Value> {
+        self.eval_source_with_prefix(source, &[])
+    }
+
+    pub fn eval_source_with_prefix(&mut self, source: &str, prefix: &[String]) -> Result<Value> {
+        let prev_prefix = self.context.module_prefix.clone();
+        self.context.module_prefix = prefix.to_vec();
         let module = parser::parse_module(source).map_err(NarcissusError::from)?;
-        self.eval_module(module)
+        let result = self.eval_module(module);
+        self.context.module_prefix = prev_prefix;
+        result
     }
 
     pub fn eval_module(&mut self, module: Module) -> Result<Value> {
-        if module.name.is_some() {
-            self.context.module_name = module.name.clone();
+        let Module { name, items } = module;
+        if let Some(declared) = name {
+            let full_path = self.resolve_module_decl_path(&declared);
+            let module_value = self.build_module_value(full_path.clone(), &items)?;
+            self.register_module(full_path, module_value.clone());
+            return Ok(module_value);
         }
+        let prev_module = self.context.current_module.clone();
+        self.context.current_module = self.context.module_prefix.clone();
         let mut last_value: Option<Value> = None;
-        for stmt in module.items {
+        for stmt in items {
             match self.execute_statement(&stmt)? {
                 FlowControl::Next => {}
                 FlowControl::NextValue(value) => {
@@ -69,7 +101,216 @@ impl Interpreter {
                 }
             }
         }
+        self.context.current_module = prev_module;
+        self.resolve_pending_uses();
+        self.ensure_imports_resolved()?;
         Ok(last_value.unwrap_or_else(Value::unit))
+    }
+
+    fn build_module_value(&mut self, path: Vec<String>, items: &[Stmt]) -> Result<Value> {
+        let module_env = Environment::with_parent(Rc::clone(&self.env));
+        let prev_env = Rc::clone(&self.env);
+        let prev_module = self.context.current_module.clone();
+        self.env = Rc::clone(&module_env);
+        self.context.current_module = path.clone();
+
+        for stmt in items {
+            match self.execute_statement(stmt)? {
+                FlowControl::Next | FlowControl::NextValue(_) => {}
+                FlowControl::Return(_) => {
+                    self.env = prev_env;
+                    self.context.current_module = prev_module;
+                    return Err(NarcissusError::from(
+                        Diagnostic::new(
+                            DiagnosticKind::Runtime,
+                            "`return` is not allowed at module scope",
+                        )
+                        .with_span(stmt.span),
+                    ));
+                }
+                FlowControl::Break(_) | FlowControl::Continue => {
+                    self.env = prev_env;
+                    self.context.current_module = prev_module;
+                    return Err(NarcissusError::from(
+                        Diagnostic::new(
+                            DiagnosticKind::Runtime,
+                            "loop control flow is not allowed at module scope",
+                        )
+                        .with_span(stmt.span),
+                    ));
+                }
+            }
+        }
+
+        let exports = Environment::snapshot(&module_env);
+        self.env = prev_env;
+        self.context.current_module = prev_module;
+
+        Ok(Value::module(path, exports))
+    }
+
+    fn resolve_module_decl_path(&self, name: &[String]) -> Vec<String> {
+        self.combine_prefix(&self.context.module_prefix, name)
+    }
+
+    fn resolve_nested_module_path(&self, name: &[String]) -> Vec<String> {
+        let base = if self.context.current_module.is_empty() {
+            self.context.module_prefix.clone()
+        } else {
+            self.context.current_module.clone()
+        };
+        self.combine_prefix(&base, name)
+    }
+
+    fn combine_prefix(&self, prefix: &[String], name: &[String]) -> Vec<String> {
+        if prefix.is_empty() {
+            return name.to_vec();
+        }
+        if !name.is_empty() && name.len() >= prefix.len() && name[..prefix.len()] == prefix[..] {
+            return name.to_vec();
+        }
+        if let (Some(last_prefix), Some(first_name)) = (prefix.last(), name.first()) {
+            if last_prefix == first_name {
+                let mut resolved = prefix.to_vec();
+                resolved.extend_from_slice(&name[1..]);
+                return resolved;
+            }
+        }
+        let mut resolved = prefix.to_vec();
+        resolved.extend_from_slice(name);
+        resolved
+    }
+
+    fn register_module(&mut self, path: Vec<String>, module_value: Value) {
+        self.modules.insert(path, module_value);
+        self.resolve_pending_uses();
+    }
+
+    fn register_module_tree(&mut self, value: Value) {
+        if let ValueKind::Module(module) = &*value.0 {
+            if !module.name.is_empty() {
+                self.modules.insert(module.name.clone(), value.clone());
+            }
+            for child in module.exports.values() {
+                if matches!(&*child.0, ValueKind::Module(_)) {
+                    self.register_module_tree(child.clone());
+                }
+            }
+            self.resolve_pending_uses();
+        }
+    }
+
+    fn resolve_pending_uses(&mut self) {
+        let mut idx = 0;
+        while idx < self.pending_uses.len() {
+            let pending = &self.pending_uses[idx];
+            if let Some(value) = self.resolve_symbol_path(&pending.path) {
+                Environment::update_alias_ref(&pending.env, &pending.name, value);
+                self.pending_uses.remove(idx);
+            } else {
+                idx += 1;
+            }
+        }
+    }
+
+    pub fn ensure_imports_resolved(&mut self) -> Result<()> {
+        self.resolve_pending_uses();
+        if let Some(pending) = self.pending_uses.first() {
+            return Err(NarcissusError::from(
+                Diagnostic::new(
+                    DiagnosticKind::Runtime,
+                    format!("unknown module `{}`", pending.path.join(".")),
+                )
+                .with_span(pending.span),
+            ));
+        }
+        Ok(())
+    }
+
+    fn try_resolve_use_value(&self, path: &[String], span: SourceSpan) -> Result<Option<Value>> {
+        if path.is_empty() {
+            return Err(NarcissusError::from(
+                Diagnostic::new(
+                    DiagnosticKind::Runtime,
+                    "use path must contain at least one segment",
+                )
+                .with_span(span),
+            ));
+        }
+
+        if let Some(value) = self.resolve_symbol_path(path) {
+            return Ok(Some(value));
+        }
+
+        if !self.context.current_module.is_empty() {
+            let mut relative = self.context.current_module.clone();
+            relative.extend_from_slice(path);
+            if let Some(value) = self.resolve_symbol_path(&relative) {
+                return Ok(Some(value));
+            }
+        }
+
+        let matches: Vec<_> = self
+            .modules
+            .iter()
+            .filter(|(module_path, _)| module_path.starts_with(path))
+            .collect();
+        if matches.len() == 1 {
+            return Ok(Some(matches[0].1.clone()));
+        } else if matches.len() > 1 {
+            return Err(NarcissusError::from(
+                Diagnostic::new(
+                    DiagnosticKind::Runtime,
+                    format!(
+                        "use path `{}` is ambiguous; candidates: {}",
+                        path.join("."),
+                        matches
+                            .iter()
+                            .map(|(segments, _)| segments.join("."))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                )
+                .with_span(span),
+            ));
+        }
+
+        Ok(None)
+    }
+
+    fn resolve_symbol_path(&self, path: &[String]) -> Option<Value> {
+        if let Some(value) = self.modules.get(path) {
+            return Some(value.clone());
+        }
+
+        for split in (1..path.len()).rev() {
+            let (module_part, remainder) = path.split_at(split);
+            if let Some(module_value) = self.modules.get(module_part) {
+                let mut current = module_value.clone();
+                let mut ok = true;
+                for segment in remainder {
+                    if let Some(next) = Self::module_field(&current, segment) {
+                        current = next;
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                }
+                if ok {
+                    return Some(current);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn module_field(value: &Value, field: &str) -> Option<Value> {
+        match &*value.0 {
+            ValueKind::Module(module) => module.exports.get(field).cloned(),
+            ValueKind::Map(map) => map.get(field).cloned(),
+            _ => None,
+        }
     }
 
     fn execute_statement(&mut self, stmt: &Stmt) -> Result<FlowControl> {
@@ -112,6 +353,46 @@ impl Interpreter {
                     Value::new(ValueKind::Function(function)),
                     false,
                 );
+                Ok(FlowControl::Next)
+            }
+            StmtKind::Module { name, items } => {
+                let full_path = self.resolve_nested_module_path(name);
+                let module_value = self.build_module_value(full_path.clone(), items)?;
+                if let Some(alias) = name.last().cloned().or_else(|| full_path.last().cloned()) {
+                    self.env
+                        .borrow_mut()
+                        .define(alias, module_value.clone(), false);
+                }
+                self.register_module(full_path, module_value.clone());
+                Ok(FlowControl::NextValue(module_value))
+            }
+            StmtKind::Use { path, alias } => {
+                let binding = alias
+                    .clone()
+                    .or_else(|| path.last().cloned())
+                    .ok_or_else(|| {
+                        NarcissusError::from(
+                            Diagnostic::new(
+                                DiagnosticKind::Runtime,
+                                "use path must contain at least one segment",
+                            )
+                            .with_span(stmt.span),
+                        )
+                    })?;
+                let resolved = self.try_resolve_use_value(path, stmt.span)?;
+                if let Some(value) = resolved {
+                    self.env.borrow_mut().define_alias(binding, value);
+                } else {
+                    self.env
+                        .borrow_mut()
+                        .define_alias(binding.clone(), Value::unit());
+                    self.pending_uses.push(PendingUse {
+                        env: Rc::clone(&self.env),
+                        name: binding,
+                        path: path.clone(),
+                        span: stmt.span,
+                    });
+                }
                 Ok(FlowControl::Next)
             }
             StmtKind::Expr(expr) => {
@@ -505,6 +786,10 @@ impl Interpreter {
                 new_map.insert(field.to_string(), value);
                 self.write_back(target, Value::map(new_map))
             }
+            ValueKind::Module(_) => Err(NarcissusError::from(
+                Diagnostic::new(DiagnosticKind::Runtime, "cannot assign to module fields")
+                    .with_span(target.span),
+            )),
             _ => Err(NarcissusError::from(
                 Diagnostic::new(
                     DiagnosticKind::Runtime,
@@ -531,6 +816,10 @@ impl Interpreter {
                         new_map.insert(field.clone(), new_value);
                         self.write_back(owner, Value::map(new_map))
                     }
+                    ValueKind::Module(_) => Err(NarcissusError::from(
+                        Diagnostic::new(DiagnosticKind::Runtime, "cannot assign to module fields")
+                            .with_span(target.span),
+                    )),
                     _ => Err(NarcissusError::from(
                         Diagnostic::new(
                             DiagnosticKind::Runtime,
@@ -676,10 +965,16 @@ impl Interpreter {
                         .with_span(span),
                 )
             }),
+            ValueKind::Module(module) => module.exports.get(field).cloned().ok_or_else(|| {
+                NarcissusError::from(
+                    Diagnostic::new(DiagnosticKind::Runtime, format!("missing field `{field}`"))
+                        .with_span(span),
+                )
+            }),
             _ => Err(NarcissusError::from(
                 Diagnostic::new(
                     DiagnosticKind::Runtime,
-                    "field access expects map/object value",
+                    "field access expects map/module value",
                 )
                 .with_span(span),
             )),
@@ -693,6 +988,11 @@ impl Interpreter {
                 Ok(text.chars().map(|c| Value::string(c.to_string())).collect())
             }
             ValueKind::Map(map) => Ok(map
+                .iter()
+                .map(|(key, value)| Value::array(vec![Value::string(key.clone()), value.clone()]))
+                .collect()),
+            ValueKind::Module(module) => Ok(module
+                .exports
                 .iter()
                 .map(|(key, value)| Value::array(vec![Value::string(key.clone()), value.clone()]))
                 .collect()),
@@ -764,6 +1064,9 @@ impl Interpreter {
 
     fn install_prelude(&mut self) {
         crate::stdlib::install(&self.env);
+        if let Ok(std_value) = Environment::get(&self.env, "std", SourceSpan { start: 0, end: 0 }) {
+            self.register_module_tree(std_value);
+        }
     }
 }
 

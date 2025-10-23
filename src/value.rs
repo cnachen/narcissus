@@ -44,6 +44,10 @@ impl Value {
         Self::new(ValueKind::Map(entries))
     }
 
+    pub fn module(name: Vec<String>, exports: IndexMap<String, Value>) -> Self {
+        Self::new(ValueKind::Module(ModuleValue { name, exports }))
+    }
+
     pub fn is_truthy(&self) -> bool {
         match &*self.0 {
             ValueKind::Unit => false,
@@ -53,6 +57,7 @@ impl Value {
             ValueKind::String(s) => !s.is_empty(),
             ValueKind::Array(values) => !values.is_empty(),
             ValueKind::Map(map) => !map.is_empty(),
+            ValueKind::Module(module) => !module.exports.is_empty(),
             ValueKind::Function(_) | ValueKind::NativeFunction(_) => true,
         }
     }
@@ -66,6 +71,7 @@ impl Value {
             ValueKind::String(_) => "String",
             ValueKind::Array(_) => "Array",
             ValueKind::Map(_) => "Map",
+            ValueKind::Module(_) => "Module",
             ValueKind::Function(_) => "Function",
             ValueKind::NativeFunction(_) => "Function",
         }
@@ -99,6 +105,11 @@ impl fmt::Debug for Value {
             ValueKind::String(s) => write!(f, "\"{s}\""),
             ValueKind::Array(values) => f.debug_list().entries(values.iter()).finish(),
             ValueKind::Map(map) => f.debug_map().entries(map.iter()).finish(),
+            ValueKind::Module(module) => f
+                .debug_struct("Module")
+                .field("name", &module.name.join("."))
+                .field("exports", &module.exports)
+                .finish(),
             ValueKind::Function(fun) => write!(
                 f,
                 "<fn {}>",
@@ -137,6 +148,7 @@ impl fmt::Display for Value {
                 }
                 write!(f, "}}")
             }
+            ValueKind::Module(module) => write!(f, "<module {}>", module.name.join(".")),
             ValueKind::Function(fun) => write!(
                 f,
                 "<fn {}>",
@@ -156,8 +168,15 @@ pub enum ValueKind {
     String(String),
     Array(Vec<Value>),
     Map(IndexMap<String, Value>),
+    Module(ModuleValue),
     Function(UserFunction),
     NativeFunction(NativeFunction),
+}
+
+#[derive(Clone)]
+pub struct ModuleValue {
+    pub name: Vec<String>,
+    pub exports: IndexMap<String, Value>,
 }
 
 #[derive(Clone)]

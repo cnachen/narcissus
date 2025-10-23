@@ -23,51 +23,46 @@ impl Parser {
     }
 
     fn parse_module(&mut self) -> Result<Module, Diagnostic> {
-        if let Some(Token {
-            kind: TokenKind::Keyword(Keyword::Module),
-            ..
-        }) = self.peek()
-        {
-            let module_token = self.advance();
-            let (name, _span) = self.parse_module_path()?;
-            if self.matches(TokenKind::LBrace) {
-                let items = self.parse_block_items(TokenKind::RBrace)?;
-                let end = self.previous().span.end;
-                return Ok(Module {
-                    name: None,
-                    items: vec![Stmt {
-                        span: SourceSpan {
-                            start: module_token.span.start,
-                            end,
-                        },
-                        kind: StmtKind::Module { name, items },
-                    }],
-                });
-            }
-            self.consume_optional_semicolon();
-            let mut items = Vec::new();
-            while !self.check(TokenKind::Eof) {
-                items.push(self.parse_statement()?);
-            }
-            return Ok(Module {
-                name: Some(name),
-                items,
-            });
-        }
+        let mut module_name: Option<Vec<String>> = None;
         let mut items = Vec::new();
+
+        if self.matches_keyword(Keyword::Module) {
+            let module_token = self.previous().clone();
+            let (name, _span) = self.parse_module_path()?;
+            if self.check(TokenKind::LBrace) {
+                let _lbrace = self.advance();
+                let body = self.parse_block_items(TokenKind::RBrace)?;
+                let end = self.previous().span.end;
+                items.push(Stmt {
+                    span: SourceSpan {
+                        start: module_token.span.start,
+                        end,
+                    },
+                    kind: StmtKind::Module { name, items: body },
+                });
+            } else {
+                module_name = Some(name);
+                self.consume_optional_semicolon();
+            }
+        }
+
         while !self.check(TokenKind::Eof) {
             items.push(self.parse_statement()?);
         }
-        Ok(Module { name: None, items })
+
+        Ok(Module {
+            name: module_name,
+            items,
+        })
     }
 
     fn parse_module_path(&mut self) -> Result<(Vec<String>, SourceSpan), Diagnostic> {
-        let name_token = self.consume_identifier("expected module name")?;
+        let name_token = self.consume_path_segment("expected module name")?;
         let start = name_token.span.start;
         let mut end = name_token.span.end;
         let mut segments = vec![name_token.lexeme.clone()];
         while self.matches(TokenKind::Dot) {
-            let segment = self.consume_identifier("expected module segment after `.`")?;
+            let segment = self.consume_path_segment("expected module segment after `.`")?;
             end = segment.span.end;
             segments.push(segment.lexeme.clone());
         }
@@ -81,6 +76,42 @@ impl Parser {
         }
         self.consume(terminator, "expected block terminator")?;
         Ok(items)
+    }
+
+    fn parse_module_statement(&mut self) -> Result<Stmt, Diagnostic> {
+        let module_token = self.consume_keyword(Keyword::Module)?;
+        let (name, _) = self.parse_module_path()?;
+        self.consume(TokenKind::LBrace, "expected `{` after module declaration")?;
+        let items = self.parse_block_items(TokenKind::RBrace)?;
+        let end = self.previous().span.end;
+        Ok(Stmt {
+            span: SourceSpan {
+                start: module_token.span.start,
+                end,
+            },
+            kind: StmtKind::Module { name, items },
+        })
+    }
+
+    fn parse_use_statement(&mut self) -> Result<Stmt, Diagnostic> {
+        let use_token = self.consume_keyword(Keyword::Use)?;
+        let (path, span) = self.parse_module_path()?;
+        let mut end = span.end;
+        let alias = if self.matches_keyword(Keyword::As) {
+            let alias_token = self.consume_identifier("expected alias after `as`")?;
+            end = alias_token.span.end;
+            Some(alias_token.lexeme.clone())
+        } else {
+            None
+        };
+        self.consume_optional_semicolon();
+        Ok(Stmt {
+            span: SourceSpan {
+                start: use_token.span.start,
+                end,
+            },
+            kind: StmtKind::Use { path, alias },
+        })
     }
 
     fn parse_block(&mut self) -> Result<(Vec<Stmt>, SourceSpan), Diagnostic> {
@@ -101,6 +132,8 @@ impl Parser {
                 TokenKind::Keyword(Keyword::Var) => return self.parse_var_decl(false),
                 TokenKind::Keyword(Keyword::Const) => return self.parse_const_decl(),
                 TokenKind::Keyword(Keyword::Fn) => return self.parse_function(false),
+                TokenKind::Keyword(Keyword::Module) => return self.parse_module_statement(),
+                TokenKind::Keyword(Keyword::Use) => return self.parse_use_statement(),
                 TokenKind::Keyword(Keyword::Async) => {
                     let async_token = self.advance();
                     let next = self
@@ -140,13 +173,10 @@ impl Parser {
 
     fn parse_var_decl(&mut self, is_mut: bool) -> Result<Stmt, Diagnostic> {
         let start = self.consume_keyword(Keyword::Var)?.span.start;
-        let mutable = if is_mut {
-            true
-        } else if self.matches_keyword(Keyword::Mut) {
-            true
-        } else {
-            false
-        };
+        if !is_mut {
+            let _ = self.matches_keyword(Keyword::Mut);
+        }
+        let mutable = true;
         let name_token = self.consume_identifier("expected variable name")?;
         let annotation = if self.matches(TokenKind::Colon) {
             Some(self.parse_type_expr()?)
@@ -1064,6 +1094,17 @@ impl Parser {
                 .peek()
                 .map(|tok| self.error(tok, message))
                 .unwrap_or_else(|| self.error_eof(message)))
+        }
+    }
+
+    fn consume_path_segment(&mut self, message: &str) -> Result<Token, Diagnostic> {
+        if let Some(token) = self.peek() {
+            match &token.kind {
+                TokenKind::Identifier | TokenKind::Keyword(_) => Ok(self.advance()),
+                _ => Err(self.error(token, message)),
+            }
+        } else {
+            Err(self.error_eof(message))
         }
     }
 

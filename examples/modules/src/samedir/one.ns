@@ -1,0 +1,5 @@
+module samedir.one
+
+fn p() -> Int {
+    return 1
+}

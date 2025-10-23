@@ -10,13 +10,13 @@ The project aims to create a scripting language called **Narcissus** (`.ns`). It
 
 ## Source Files and Modules
 - Source files use UTF-8 text with `.ns` extension.
-- One **module** per file by default; nested modules declared with `module foo.bar { ... }`.
-- Imports mirror the module tree: `use math.trig.sin`.
-- Each module can expose public symbols via `pub` modifiers; unmarked items are private to the module file.
+- Declare a file-level module with `module app.main`; nested modules use `module extra { ... }` or dotted declarations inside another module.
+- Module paths follow the filesystem layout (for example, `src/samedir/two/impl.ns` maps to `samedir.two.impl` unless overridden).
+- Imports mirror the module tree via dot syntax: `use math.trig.sin` or `use util.logging as log`.
 
 ## Lexical Structure
 - Significant whitespace for indentation (4 spaces recommended), but braces remain mandatory.
-- Single-line comments use `//`; block comments use `/* ... */` and can nest.
+- Single-line comments use `#`; block comments use `"""` `"""` and cannot nest.
 - Identifiers use Unicode letters and `_`, but ASCII is preferred; identifiers are case-sensitive.
 - Numeric literals support underscores for readability (`1_000_000`), binary (`0b1010`), octal (`0o755`), hex (`0xFF`), and floating point (`3.14`, `2e-3`).
 

@@ -1,0 +1,12 @@
+module utils
+
+use main.extra
+
+fn p() -> Int {
+    return 42
+}
+
+fn w() {
+    println(extra.p())
+    println(extra.extra2.p())
+}

@@ -1,0 +1,5 @@
+module two.impl
+
+fn p() -> Int {
+    return 2
+}

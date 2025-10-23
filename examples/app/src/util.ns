@@ -1,3 +1,5 @@
+module app.util
+
 fn greet(name) {
     return std.string.join(["Hello", name], " ")
 }

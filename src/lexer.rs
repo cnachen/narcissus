@@ -9,6 +9,7 @@ pub enum Keyword {
     Async,
     Module,
     Use,
+    As,
     Pub,
     If,
     Else,
@@ -29,7 +30,6 @@ pub enum Keyword {
     Struct,
     Enum,
     Trait,
-    Impl,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +158,15 @@ impl<'a> Lexer<'a> {
                 } else {
                     break;
                 }
+            }
+
+            if let Some((_, '#')) = self.peek() {
+                while let Some((_, ch)) = self.bump() {
+                    if ch == '\n' {
+                        break;
+                    }
+                }
+                continue;
             }
 
             let mut handled_comment = false;
@@ -414,6 +423,7 @@ fn keyword_for(ident: &str) -> Option<TokenKind> {
         "async" => Kw::Async,
         "module" => Kw::Module,
         "use" => Kw::Use,
+        "as" => Kw::As,
         "pub" => Kw::Pub,
         "if" => Kw::If,
         "else" => Kw::Else,
@@ -434,7 +444,6 @@ fn keyword_for(ident: &str) -> Option<TokenKind> {
         "struct" => Kw::Struct,
         "enum" => Kw::Enum,
         "trait" => Kw::Trait,
-        "impl" => Kw::Impl,
         _ => return None,
     };
     Some(TokenKind::Keyword(keyword))

@@ -87,18 +87,28 @@ pub fn install(env: &EnvironmentRef) {
         native("unimplemented", usize::MAX, net_unavailable),
     );
 
-    let mut std_map = IndexMap::new();
-    std_map.insert("io".into(), Value::map(io));
-    std_map.insert("string".into(), Value::map(string));
-    std_map.insert("collections".into(), Value::map(collections));
-    std_map.insert("math".into(), Value::map(math));
-    std_map.insert("time".into(), Value::map(time));
-    std_map.insert("runtime".into(), Value::map(runtime));
-    std_map.insert("fs".into(), Value::map(fs_mod));
-    std_map.insert("net".into(), Value::map(net));
+    let io_value = Value::module(vec!["std".into(), "io".into()], io);
+    let string_value = Value::module(vec!["std".into(), "string".into()], string);
+    let collections_value = Value::module(vec!["std".into(), "collections".into()], collections);
+    let math_value = Value::module(vec!["std".into(), "math".into()], math);
+    let time_value = Value::module(vec!["std".into(), "time".into()], time);
+    let runtime_value = Value::module(vec!["std".into(), "runtime".into()], runtime);
+    let fs_value = Value::module(vec!["std".into(), "fs".into()], fs_mod);
+    let net_value = Value::module(vec!["std".into(), "net".into()], net);
 
-    env.borrow_mut()
-        .define("std".into(), Value::map(std_map), false);
+    let mut std_exports = IndexMap::new();
+    std_exports.insert("io".into(), io_value);
+    std_exports.insert("string".into(), string_value);
+    std_exports.insert("collections".into(), collections_value);
+    std_exports.insert("math".into(), math_value);
+    std_exports.insert("time".into(), time_value);
+    std_exports.insert("runtime".into(), runtime_value);
+    std_exports.insert("fs".into(), fs_value);
+    std_exports.insert("net".into(), net_value);
+
+    let std_value = Value::module(vec!["std".into()], std_exports);
+
+    env.borrow_mut().define("std".into(), std_value, false);
 }
 
 fn native(name: &'static str, arity: usize, callback: fn(&[Value]) -> Result<Value>) -> Value {

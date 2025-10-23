@@ -1,6 +1,6 @@
 use std::{
     fs, io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use clap::{Parser, Subcommand};
@@ -92,12 +92,17 @@ fn run_script(script: &Path) -> Result<(), NarcissusError> {
         .map_err(|err| io_error("orchid run", script, err))?;
     let mut interpreter = Interpreter::new();
 
-    if let Some(src_dir) = script.parent() {
-        load_project_sources(&mut interpreter, src_dir, Some(&script))?;
+    let src_dir = script.parent().and_then(|dir| dir.canonicalize().ok());
+    if let Some(ref canonical_src) = src_dir {
+        load_project_sources(&mut interpreter, canonical_src, Some(&script))?;
     }
 
     let source = fs::read_to_string(&script).map_err(|err| io_error("orchid run", &script, err))?;
-    interpreter.eval_source(&source)?;
+    let prefix = src_dir
+        .as_ref()
+        .map(|root| module_prefix(root, &script))
+        .unwrap_or_default();
+    interpreter.eval_source_with_prefix(&source, &prefix)?;
     Ok(())
 }
 
@@ -165,9 +170,25 @@ fn load_project_sources(
         }
         let source =
             fs::read_to_string(&file).map_err(|err| io_error("orchid load", &file, err))?;
-        interpreter.eval_source(&source)?;
+        let prefix = module_prefix(&canonical_src, &file);
+        interpreter.eval_source_with_prefix(&source, &prefix)?;
     }
     Ok(())
+}
+
+fn module_prefix(src_root: &Path, file: &Path) -> Vec<String> {
+    let relative = file.strip_prefix(src_root).unwrap_or(file);
+    let mut segments = Vec::new();
+    if let Some(parent) = relative.parent() {
+        for component in parent.components() {
+            if let Component::Normal(part) = component {
+                if let Some(text) = part.to_str() {
+                    segments.push(text.to_string());
+                }
+            }
+        }
+    }
+    segments
 }
 
 fn io_error(context: &str, path: &Path, err: io::Error) -> NarcissusError {

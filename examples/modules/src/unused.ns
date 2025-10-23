@@ -1,0 +1,5 @@
+module unused
+
+fn p() -> Int {
+    return 142
+}
